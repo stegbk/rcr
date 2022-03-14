@@ -207,7 +207,7 @@ class Eyes():
                             if t_best is not 0:
                                 #found_duplicate = True
                                 logger.warning("Found duplicate at index c1 = {} c2 = {} duplicate_list_len is {} total checks {}".format(index, i2, len(duplicated_contours_list), total_checks))
-                                if t_best > 0:
+                                if t_best < 0:
                                     best = c1
                                     worst = c2
                                 else:
@@ -318,17 +318,19 @@ class Eyes():
 def main():
     logger.setLevel(INFO)
     logger.info('Starting acquisition')
-    #bot = CubeBot()
+    
     bot = None
-    #bot.home()
+    if not Eyes.no_bot_test:
+        bot = CubeBot()
+        bot.home()
+        bot.pause()
     brn = Eyes(bot)
-    #bot.pause()
     brn.obtain_face_image_squares()
-    #for i in range(3):
-    #    if not brn.use_test_images:
-    #        bot.flip(X_AXIS, 1)
-    #   brn.obtain_face_image_squares()
-    brn.display_image_with_squares()
+    for i in range(3):
+        if not brn.use_test_images:
+            bot.flip(X_AXIS, 1)
+        brn.obtain_face_image_squares()
+    #brn.display_image_with_squares()
     #brn.filter_boxes_by_location()
     brn.all_contours = brn.filter_squares_by_overlap()
     brn.display_image_with_squares("Non-duplicated squares")
