@@ -17,6 +17,8 @@ from logging import Logger
 from robot import CubeBot
 from math import sqrt
 
+from square import Square
+
 
 SQUARE_MIN_PIXELS = 10000
 SQUARE_MAX_PIXELS = 60000
@@ -25,6 +27,8 @@ TEST_IMAGE_NAME = 'test'
 TEST_IMAGE_EXT = '.png'
 DEFAULT_SIDE_TO_SQRT_AREA_LIMIT = 0.30
 DEFAULT_OVERLAP_THRESHOLD = 0.20
+MAX_WIDTH = 1024
+MAX_HEIGHT = 720
 
 class Eyes():
     camera:PiCamera = None
@@ -280,9 +284,41 @@ class Eyes():
     def apply_squares_to_image(self, image, cnts=None):
         if cnts is None:
             cnts = self.all_contours
+        index = 0
+        annotation_color = (36, 255, 12)
+        font = cv2.FONT_HERSHEY_DUPLEX
+        scale = 0.7
+        thickness = 1
+        
         for c in cnts:            
             x,y,w,h = cv2.boundingRect(c)
-            cv2.rectangle(image, (x, y), (x + w, y + h), (36,255,12), 2)
+            cv2.rectangle(image, (x, y), (x + w, y + h), annotation_color, 2)
+            sq = Square(c)
+            cx, cy = sq.get_center()
+            cx = round(cx)
+            cy = round(cy)
+            text = "sq {}".format(index)
+            text_size, _ = cv2.getTextSize(text, font, scale, thickness)
+            cx_corrected = round(cx - (text_size[0]/2))
+            text_line_2 = "{}, {}".format(cx, cy)
+            text_size_2,  _ = cv2.getTextSize(text, font, scale, thickness)
+            line_two_cy = cy + round(1.5 * text_size[1])
+            cx2_corrected = round(cx - (text_size_2[0]/2))
+            cv2.putText(  img = image,
+                text = text,
+                org = (cx_corrected, cy),
+                fontFace = font,
+                fontScale = scale,
+                color = annotation_color,
+                thickness = thickness)
+            cv2.putText(img = image, 
+                text = text_line_2,
+                org = (cx2_corrected, line_two_cy),
+                fontFace = font,
+                fontScale = scale,
+                color = annotation_color,
+                thickness = thickness)
+            index += 1
         return image
     
     def retract_arms_update_squares(self, axis:int):
@@ -304,16 +340,54 @@ class Eyes():
         self.retract_arms_update_squares(X_AXIS)
         self.retract_arms_update_squares(Y_AXIS)
 
-    def save_image_with_squares(self):
+    def save_image_with_squares(self, name=None, ext=None):
         image = self.obtain_image()
         square_image = self.apply_squares_to_image(image, self.all_contours)
-        self.save_image(square_image)
+        self.save_image(square_image, name, ext)
 
     def display_image_with_squares(self, title=None):
         image = self.obtain_image()
         image = np.uint8(image)
         square_image = self.apply_squares_to_image(image, self.all_contours)
         self.display_and_pause(square_image, title)
+
+    def get_smallest_roi(self, cnts):
+        smallest_area = MAX_WIDTH * MAX_HEIGHT
+        smallest_c = None
+        for c in cnts:
+            x, y, w, h = cv2.boundingRect(c)
+            area = w * h
+            if area < smallest_area:
+                smallest_area = area
+                smallest_c = c
+        return smallest_c
+    
+    def sort_squares(self, cnts):
+        sorted_squares:List[Square] = []
+        for c in cnts:
+            tmp_square = Square(c)
+            sorted_squares.append(tmp_square)
+        sorted_squares.sort()
+        for sq in sorted_squares:
+            sq.set_row_order()
+        for i in range(3):
+            row_index = 3 * i
+            sorted_squares[row_index:row_index + 2].sort()
+
+        for i in range(3):
+            for j in range(3):
+                x, y = sorted_squares[(3*i) + j].get_center()
+                logger.debug('{},{} at [{} {}]\t'.format(x, y, i, j))
+        
+        sorted_cnts = []
+        for sq in sorted_squares:
+            sorted_cnts.append(sq.get_roi())
+
+        return sorted_cnts
+            
+
+            
+
 
 def main():
     logger.setLevel(INFO)
@@ -333,8 +407,10 @@ def main():
     #brn.display_image_with_squares()
     #brn.filter_boxes_by_location()
     brn.all_contours = brn.filter_squares_by_overlap()
-    brn.display_image_with_squares("Non-duplicated squares")
-    brn.save_image_with_squares()
+    sorted_squares = brn.sort_squares(brn.all_contours)
+    brn.all_contours = sorted_squares
+    #brn.display_image_with_squares("Non-duplicated squares")
+    brn.save_image_with_squares(name='output_squares')
 
 
 if __name__ == '__main__':
