@@ -11,11 +11,19 @@ from matplotlib.pyplot import step
 from pprint import pprint as pp
 from typing import List
 from actuator import Actuator
+from face import Face
 from robot import *
 import numpy as np
 from logging import Logger
 from robot import CubeBot
-from math import sqrt
+from math import ceil, floor, sqrt
+import numpy
+import matplotlib.pyplot as plt
+from sklearn.datasets import make_blobs
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.preprocessing import StandardScaler
+from kneed import KneeLocator
 
 from square import Square
 
@@ -46,7 +54,8 @@ class Eyes():
     show_wait_time = 0
     squareness_limit = DEFAULT_SIDE_TO_SQRT_AREA_LIMIT
     no_bot_test = True
-    no_show_image_test = False
+    no_show_image_test = True
+    faces:List[Face] = []
 
 
     def __init__(self, cb:CubeBot):
@@ -68,6 +77,8 @@ class Eyes():
             self.rawCapture.truncate(0)
             if self.save_images:
                 self.save_image(image)
+
+        logger.info('The type of an image is {}'.format(image.__class__))
         return image
 
     def set_cube_bot(self, cb:CubeBot):
@@ -210,7 +221,7 @@ class Eyes():
                             total_checks += 1
                             if t_best is not 0:
                                 #found_duplicate = True
-                                logger.warning("Found duplicate at index c1 = {} c2 = {} duplicate_list_len is {} total checks {}".format(index, i2, len(duplicated_contours_list), total_checks))
+                                logger.info("Found duplicate at index c1 = {} c2 = {} duplicate_list_len is {} total checks {}".format(index, i2, len(duplicated_contours_list), total_checks))
                                 if t_best < 0:
                                     best = c1
                                     worst = c2
@@ -273,11 +284,11 @@ class Eyes():
         for i in range(3):
             channel_image = self.image_to_channel_image(image, i)
             tmp_cnts = self.find_squares_in_image_channel(channel_image)
-            logger.warning("for channel {} found {} contours total".format(i, len(tmp_cnts)))
+            logger.info("for channel {} found {} contours total".format(i, len(tmp_cnts)))
             tmp_cnts = self.filter_squares_by_size(tmp_cnts)
-            logger.warning("for channel {} found {} contours that were big enough".format(i, len(tmp_cnts)))
+            logger.info("for channel {} found {} contours that were big enough".format(i, len(tmp_cnts)))
             tmp_cnts = self.filter_squares_by_shape(tmp_cnts)
-            logger.warning("for channel {} found {} contours that were square enough".format(i, len(tmp_cnts)))
+            logger.info("for channel {} found {} contours that were square enough".format(i, len(tmp_cnts)))
             cnts.extend(tmp_cnts)
         return cnts
 
@@ -297,16 +308,60 @@ class Eyes():
             cx, cy = sq.get_center()
             cx = round(cx)
             cy = round(cy)
+            print("Cx {} cy {} index {}".format(cx, cy, index))
             text = "sq {}".format(index)
             text_size, _ = cv2.getTextSize(text, font, scale, thickness)
             cx_corrected = round(cx - (text_size[0]/2))
             text_line_2 = "{}, {}".format(cx, cy)
-            text_size_2,  _ = cv2.getTextSize(text, font, scale, thickness)
+            text_size_2,  _ = cv2.getTextSize(text_line_2, font, scale, thickness)
             line_two_cy = cy + round(1.5 * text_size[1])
             cx2_corrected = round(cx - (text_size_2[0]/2))
             cv2.putText(  img = image,
                 text = text,
                 org = (cx_corrected, cy),
+                fontFace = font,
+                fontScale = scale,
+                color = annotation_color,
+                thickness = thickness)
+            cv2.putText(img = image, 
+                text = text_line_2,
+                org = (cx2_corrected, line_two_cy),
+                fontFace = font,
+                fontScale = scale,
+                color = annotation_color,
+                thickness = thickness)
+            index += 1
+        return image
+
+
+    def apply_colors_to_image(self, image, c_names:List[str], c_values:List, cnts=None):
+        if cnts is None:
+            cnts = self.all_contours
+        index = 0
+        annotation_color = (36, 255, 12)
+        font = cv2.FONT_HERSHEY_DUPLEX
+        scale = 0.7
+        thickness = 1
+        
+        for c in cnts:            
+            x,y,w,h = cv2.boundingRect(c)
+            cv2.rectangle(image, (x, y), (x + w, y + h), annotation_color, 2)
+            sq = Square(c)
+            cx, cy = sq.get_center()
+            cx = round(cx)
+            cy = round(cy)
+            text = "{}".format(c_names[index])
+            text_size, _ = cv2.getTextSize(text, font, scale, thickness)
+            cx_corrected = round(cx - (text_size[0]/2))
+            line_one_cy = cy + round(3 * text_size[1])
+            cv = c_values[index]
+            text_line_2 = "[{}, {}, {}]".format(round(cv[0]), round(cv[1]), round(cv[2]))
+            text_size_2,  _ = cv2.getTextSize(text_line_2, font, scale, thickness)
+            line_two_cy = cy + round(4.5 * text_size[1])
+            cx2_corrected = round(cx - (text_size_2[0]/2))
+            cv2.putText(  img = image,
+                text = text,
+                org = (cx_corrected, line_one_cy),
                 fontFace = font,
                 fontScale = scale,
                 color = annotation_color,
@@ -333,17 +388,26 @@ class Eyes():
             self.bot.extend_arms(axis)
         cnts = self.find_squares_in_image(image)
         self.all_contours.extend(cnts)
+        return image
 
     def obtain_face_image_squares(self):
         if self.bot is None and self.no_bot_test is False:
             raise Exception('The bot must be initialized to obtain face images')
-        self.retract_arms_update_squares(X_AXIS)
-        self.retract_arms_update_squares(Y_AXIS)
+        xy_image = self.retract_arms_update_squares(X_AXIS)
+        ud_image = self.retract_arms_update_squares(Y_AXIS)
+        new_face = Face(xy_retract_image=xy_image, ud_retract_image=ud_image)
+        self.faces.append(new_face)
 
     def save_image_with_squares(self, name=None, ext=None):
         image = self.obtain_image()
         square_image = self.apply_squares_to_image(image, self.all_contours)
         self.save_image(square_image, name, ext)
+
+    def save_image_with_squares_and_colors(self, c_names:List[str], color_values:List, name=None, ext=None, ):
+        image = self.obtain_image()
+        squares_image = self.apply_squares_to_image(image, self.all_contours)
+        colors_image = self.apply_colors_to_image(image=squares_image, cnts=self.all_contours, c_names=c_names, c_values=color_values)
+        self.save_image(colors_image, name, ext)
 
     def display_image_with_squares(self, title=None):
         image = self.obtain_image()
@@ -364,20 +428,29 @@ class Eyes():
     
     def sort_squares(self, cnts):
         sorted_squares:List[Square] = []
+        
         for c in cnts:
             tmp_square = Square(c)
             sorted_squares.append(tmp_square)
         sorted_squares.sort()
         for sq in sorted_squares:
             sq.set_row_order()
-        for i in range(3):
-            row_index = 3 * i
-            sorted_squares[row_index:row_index + 2].sort()
 
+        tmp_sorted = []
+        row_size = 3
+        for i in range(row_size):
+            temp_set = None
+            row_index = row_size * i
+            logger.info("Getting set {} to {}".format(row_index, row_index + row_size))
+            temp_set = sorted_squares[row_index:row_index+row_size]
+            temp_set.sort()
+            tmp_sorted.extend(temp_set)
+        
+        sorted_squares = tmp_sorted
         for i in range(3):
             for j in range(3):
                 x, y = sorted_squares[(3*i) + j].get_center()
-                logger.debug('{},{} at [{} {}]\t'.format(x, y, i, j))
+                logger.info('{},{} at [{} {}]\t'.format(x, y, i, j))
         
         sorted_cnts = []
         for sq in sorted_squares:
@@ -406,11 +479,166 @@ def main():
         brn.obtain_face_image_squares()
     #brn.display_image_with_squares()
     #brn.filter_boxes_by_location()
+    #brn.display_image_with_squares("Squares no overlap filter")
+    #brn.save_image_with_squares(name='output_squares_no_overlap')
     brn.all_contours = brn.filter_squares_by_overlap()
     sorted_squares = brn.sort_squares(brn.all_contours)
     brn.all_contours = sorted_squares
-    #brn.display_image_with_squares("Non-duplicated squares")
+    squares_list = []
+    for c in brn.all_contours:
+        squares_list.append(Square(c))
+
+    brn.display_image_with_squares("Squares")
     brn.save_image_with_squares(name='output_squares')
+    pixel_list = []
+    true_labels = []
+    # Get a list of all pixel squares for k-means
+    index = 0
+    first_face_count = 0
+    for face in brn.faces:
+        face.set_square_list(squares_list)
+        for i in range(9):
+            this_pixel_list = face.get_pixels_from_square_and_image(i)
+            tmp_labels = [i for n in range(len(this_pixel_list))]
+            pixel_list.extend(this_pixel_list)
+            if index == 0:
+                true_labels.extend(tmp_labels)
+        index += index
+
+    scaler = StandardScaler()
+    #scaled_pixels = scaler.fit_transform(pixel_list)
+    scaled_pixels = pixel_list
+    nClusters = 7
+    kmeans_kwargs = {
+    "init": "random",
+    "n_init": 10,
+    "max_iter": 300,
+    "random_state": 42,
+    }
+
+    sse = []
+    
+    cluster_range = 21
+    start_time = time.time()
+    print("Computing k-means from k= 1 to k={} starting at {}".format(cluster_range, start_time))
+    for k in range(1, cluster_range):
+        kmeans = KMeans(n_clusters=k, **kmeans_kwargs)
+        kmeans.fit(scaled_pixels)
+        sse.append(kmeans.inertia_)
+        seconds_taken = round(time.time() - start_time)
+        minutes = floor(seconds_taken/60)
+        if minutes == 0:
+            seconds_remainder = seconds_taken
+        else:   
+            seconds_remainder = seconds_taken - (60 * minutes)
+        str_k = "{:3d}".format(k)
+        str_inertia = "{:11.2f}".format(kmeans.inertia_)
+        str_minutes = "{:2d}".format(minutes)
+        str_seconds = "{:2d}".format(seconds_remainder)
+        logger.info("for {} ineteria was {} at {}:{}".format(str_k, str_inertia, str_minutes, str_seconds))
+
+
+    for i in range(len(sse)):
+        print(" {:5d}".format(i), end="")
+
+    print("")
+    for i in sse:
+            print(" {:5}".format(i), end="")
+    print("")
+    kl = KneeLocator(
+        range(1, cluster_range), sse, curve="convex", direction="decreasing"
+    )
+
+    optimized_cluster_count = kl.elbow
+    optimized_cluster_count = 7
+    print('The optimum number of clusters appears to be {}'.format(optimized_cluster_count))
+    kmeans = KMeans(n_clusters=optimized_cluster_count, **kmeans_kwargs)
+    kmeans.fit(scaled_pixels)
+    
+
+    print(kmeans.cluster_centers_)
+    label = kmeans.labels_
+    print_matches = False
+    if print_matches:
+        for i in range(len(pixel_list)):
+            pixel = pixel_list[i]
+            print('Square: {:3d}  Label: {:3d} Value: {}, {}, {}'.format(true_labels[i], label[i], pixel[0], pixel[1], pixel[2]))
+        #Getting unique labels
+    u_labels = np.unique(label)
+ 
+
+    brn.read_image_index = 0
+    blank_image:numpy.ndarray = brn.obtain_image()
+    #blank_image = np.zeros_like(blank_image)
+    im_shape = blank_image.shape
+    imstep = floor(im_shape[0]/optimized_cluster_count)
+    row = 0
+    index = 0
+    color_map = {}
+    for color in kmeans.cluster_centers_:
+        for i in range(imstep):
+            blank_image[row, :] = color
+            row += 1
+        cn, cv = Square.find_best_color_match(color)
+        print("Color number {} is {} value {}".format(index, cn, color))
+        color_map[cn] = color
+        index += 1
+    brn.save_image(image = blank_image, imageName="color_segmentation_example")
+
+
+    print(u_labels)
+    #plotting the results:
+    print('Square: ', end="")
+    for i in range(nClusters):
+        print('{0:6d}'.format(i), end="")
+    print("")
+    pixel_counts_by_roi = []
+    for i in range(9):
+        pixel_counts_by_roi.append(np.zeros(nClusters))
+        index = 0
+        for k in label[:len(true_labels)]:
+            if true_labels[index] == i:
+                pixel_counts_by_roi[i][k] += 1
+            index += 1
+    #print(pixel_counts_by_roi)
+    for i in range(9):
+        print('Square: {:6d}'.format(i), end="")
+        for j in range(nClusters):
+            print(' {0:6d}'.format(round(pixel_counts_by_roi[i][j])), end="")
+        print("")
+
+    tmp_image_index = brn.image_index
+    for i in range(8):
+        brn.image_index = i
+        brn.save_image_with_squares(name='All_face_images')
+    brn.image_index = tmp_image_index
+
+
+    test_image_face = 2
+    brn.read_image_index = 2 * test_image_face
+    xy_retract = brn.obtain_image()
+    ud_retract = brn.obtain_image()
+    color_list = []
+    color_value_list = []
+    labeled_face = Face(xy_retract_image=ud_retract, ud_retract_image=xy_retract)
+    labeled_face.set_square_list(squares_list)
+    for i in range(9):
+        pixels = labeled_face.get_pixels_from_square_and_image(square=i)
+        color_average = numpy.mean(pixels, axis=0)
+        print("Square {} color is {}".format(i, color_average))
+        c_name, c_value = Square.find_best_color_match_by_distance(input_color=color_average, local_colors=color_map)
+        print("Square {} has color {}".format(i, c_name))
+        color_list.append(c_name)
+        color_value_list.append(c_value)
+    brn.read_image_index = 2 * test_image_face
+    brn.save_image_with_squares_and_colors(c_names=color_list, color_values=color_value_list, name="Squares_with_colors")
+
+    #for i in u_labels:    
+    #    plt.scatter(pixel_list[:,0] , scaled_pixels[:,1] , label = i)
+    #plt.legend()
+    #plt.show()
+
+ 
 
 
 if __name__ == '__main__':

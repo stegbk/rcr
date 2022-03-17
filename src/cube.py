@@ -12,12 +12,10 @@ GREEN = 5
 FACE_INDEXES = [WHITE, YELLOW, RED, BLUE, ORANGE, GREEN]
 
 class Cube():
-    white:Face = None
-    yellow:Face = None
-    red:Face = None
-    blue:Face = None
-    orange:Face = None
-    green:Face = None
-    face_array:List[Face] = [len(FACE_INDEXES)]
+    faces = None
 
+    def __init__(self):
+        self.faces = [len(FACE_INDEXES)]
+
+    #def add_face(self, image_rl, image_ud, squares):
         

@@ -152,7 +152,26 @@ class CubeBot():
         if si == Y_AXIS:
             offset = -1
 
+        # Retract one servo and rotate it 90 degrees in the oposite direction for stability
+
+        self.servos[si + 2].ret()
+        self.to_angles()
+        self.update_angles()
+
+        if (direction < 0):
+            side_start_direction = self.servos[si + 2].rcw()
+        else:
+            side_start_direction = self.servos[si + 2].rccw()
+        self.to_angles()
+        self.update_angles()
         self.pause()
+        
+        # Extend the servo
+        self.servos[si + 2].ext()
+        self.to_angles()
+        self.update_angles()
+        self.pause()
+
         # Retract the sides
         
         self.servos[si + offset].ret()
@@ -165,10 +184,10 @@ class CubeBot():
         # Rotate
         if (direction < 0):
             first = self.servos[si].ccw
-            second = self.servos[si + 2].cw
         else:
             first = self.servos[si].cw
-            second = self.servos[si + 2].ccw
+        
+        second = self.servos[si + 2].r_home
 
         steps = 10
         first_step_size = (first - self.servos[si].r_home)/steps
